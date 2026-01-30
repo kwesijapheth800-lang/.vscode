@@ -1,0 +1,5 @@
+Attendance Record
+arthur - Absent
+john - Present
+prince - Absent
+
