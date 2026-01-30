@@ -5,7 +5,6 @@ import os
 import re  # For "Regular Expressions" to check text patterns
 from datetime import datetime
 
-
 class AttendanceApp:
     def __init__(self, root):
         self.root = root
