@@ -1,170 +1,121 @@
 import tkinter as tk
-from tkinter import messagebox, ttk, filedialog
+from tkinter import messagebox, ttk
 import csv
 import os
-import re  # For "Regular Expressions" to check text patterns
+import re
+import sqlite3
 from datetime import datetime
+
 
 class AttendanceApp:
     def __init__(self, root):
         self.root = root
         self.root.title("KAAF University - Attendance Manager")
-        self.root.geometry("700x800")
+        self.root.geometry("800x850")
 
-        # --- DATA STORAGE ---
-        self.students = {}  # {index: name}
-        self.attendance_vars = {}  # {index: StringVar}
+        # --- DATABASE SETUP ---
+        self.conn = sqlite3.connect("kaaf_data.db")
+        self.cursor = self.conn.cursor()
+        self.cursor.execute("""
+            CREATE TABLE IF NOT EXISTS students (
+                index_number TEXT PRIMARY KEY,
+                name TEXT
+            )
+        """)
+        self.conn.commit()
 
-        # --- TOP HEADER BAR ---
-        top_bar = ttk.Frame(root)
-        top_bar.pack(fill="x", padx=10, pady=5)
+        self.attendance_vars = {}
+        self.course_details = {}  # Store course info here
 
-        ttk.Label(top_bar, text="KAAF Attendance System",
-                  font=("Arial", 10, "bold")).pack(side="left")
+        # --- UI BUILDER ---
+        self.setup_ui()
 
-        # The Help Button
-        help_btn = tk.Button(top_bar, text="❓ Help", command=self.show_help,
-                             bg="#f0f0f0", relief="flat", cursor="hand2")
-        help_btn.pack(side="right")
+    def setup_ui(self):
+        # 1. HEADER (Always Visible)
+        header_frame = tk.Frame(self.root, bg="#003366", height=60)
+        header_frame.pack(fill="x")
+        tk.Label(header_frame, text="KAAF ATTENDANCE SYSTEM",
+                 font=("Helvetica", 16, "bold"), bg="#003366", fg="white").pack(pady=15)
 
-        # --- TABS LAYOUT ---
-        # We use a Notebook to create the "Tabs" effect
-        self.notebook = ttk.Notebook(root)
-        self.notebook.pack(fill="both", expand=True, padx=10, pady=10)
+        # 2. COURSE CONFIG SECTION (Top Area)
+        self.frame_config = ttk.LabelFrame(
+            self.root, text=" Step 1: Course Details ", padding="15")
+        self.frame_config.pack(fill="x", padx=20, pady=10)
 
-        # Create the two main tabs
-        self.tab_setup = ttk.Frame(self.notebook)
-        self.tab_mark = ttk.Frame(self.notebook)
+        # Grid Layout for Inputs
+        ttk.Label(self.frame_config, text="Course Name:").grid(
+            row=0, column=0, sticky="w")
+        self.ent_cname = ttk.Entry(self.frame_config, width=25)
+        self.ent_cname.grid(row=0, column=1, padx=5, pady=5)
 
-        self.notebook.add(self.tab_setup, text=" 1. Setup Class & Students ")
-        self.notebook.add(self.tab_mark, text=" 2. Mark Attendance ")
+        ttk.Label(self.frame_config, text="Course Code:").grid(
+            row=0, column=2, sticky="w")
+        self.ent_ccode = ttk.Entry(self.frame_config, width=15)
+        self.ent_ccode.grid(row=0, column=3, padx=5, pady=5)
 
-        # Build the contents
-        self.build_setup_tab()
-        self.build_attendance_tab()
+        ttk.Label(self.frame_config, text="Lecturer:").grid(
+            row=1, column=0, sticky="w")
+        self.ent_lecturer = ttk.Entry(self.frame_config, width=25)
+        self.ent_lecturer.grid(row=1, column=1, padx=5, pady=5)
 
-        # Load any existing students on startup
-        self.load_students_from_file()
+        ttk.Label(self.frame_config, text="Duration (Hrs):").grid(
+            row=1, column=2, sticky="w")
+        self.ent_duration = ttk.Entry(self.frame_config, width=15)
+        self.ent_duration.grid(row=1, column=3, padx=5, pady=5)
 
-    # ==========================================
-    # TAB 1: SETUP (Updated with "Enter" Key Logic)
-    # ==========================================
-    def build_setup_tab(self):
-        # --- SECTION A: COURSE DETAILS ---
-        info_frame = ttk.LabelFrame(
-            self.tab_setup, text=" Course Information ", padding="15")
-        info_frame.pack(fill="x", padx=10, pady=10)
+        # THE "CONTINUE" BUTTON
+        self.btn_continue = tk.Button(self.frame_config, text="CONTINUE ➤", bg="#4CAF50", fg="white",
+                                      font=("Arial", 10, "bold"), command=self.lock_and_load)
+        self.btn_continue.grid(
+            row=0, column=4, rowspan=2, padx=20, sticky="ns")
 
-        # 1. Course Name
-        ttk.Label(info_frame, text="Course Name:").grid(
-            row=0, column=0, sticky="w", pady=5)
-        self.entry_course_name = ttk.Entry(info_frame, width=30)
-        self.entry_course_name.grid(row=0, column=1, padx=5)
+        # 3. THE "BOLD TITLE" HEADER (Hidden initially)
+        self.frame_active_header = tk.Frame(self.root, bg="#f0f0f0", pady=10)
+        # We don't pack it yet. We pack it when "Continue" is clicked.
+        self.lbl_course_display = tk.Label(self.frame_active_header, text="",
+                                           font=("Arial", 22, "bold"), bg="#f0f0f0", fg="#333")
+        self.lbl_course_display.pack()
 
-        # 2. Course Code
-        ttk.Label(info_frame, text="Course Code:").grid(
-            row=0, column=2, sticky="w", pady=5, padx=(20, 0))
-        self.entry_course_code = ttk.Entry(info_frame, width=15)
-        self.entry_course_code.grid(row=0, column=3, padx=5)
+        # 4. CONTENT AREA (Where we swap Marking vs Student List)
+        self.container = tk.Frame(self.root)
+        self.container.pack(fill="both", expand=True, padx=20, pady=5)
 
-        # 3. Lecturer
-        ttk.Label(info_frame, text="Lecturer:").grid(
-            row=1, column=0, sticky="w", pady=5)
-        self.entry_lecturer = ttk.Entry(info_frame, width=30)
-        self.entry_lecturer.grid(row=1, column=1, padx=5)
+        # -- Build the two different "Pages" --
+        self.build_marking_view()
+        self.build_student_manager_view()
 
-        # 4. Duration
-        ttk.Label(info_frame, text="Duration:").grid(
-            row=1, column=2, sticky="w", pady=5, padx=(20, 0))
-        self.entry_duration = ttk.Entry(info_frame, width=15)
-        self.entry_duration.grid(row=1, column=3, padx=5)
-
-        # --- THE MAGIC: LINKING THE ENTER KEY ---
-        # When you hit Enter in Name, go to Code
-        self.entry_course_name.bind(
-            "<Return>", lambda e: self.entry_course_code.focus_set())
-        # When you hit Enter in Code, go to Lecturer
-        self.entry_course_code.bind(
-            "<Return>", lambda e: self.entry_lecturer.focus_set())
-        # When you hit Enter in Lecturer, go to Duration
-        self.entry_lecturer.bind(
-            "<Return>", lambda e: self.entry_duration.focus_set())
-        # When you hit Enter in Duration, jump down to the "Add Student" Index box
-        self.entry_duration.bind(
-            "<Return>", lambda e: self.new_index.focus_set())
-
-        # --- SECTION B: MANAGE STUDENTS ---
-        student_frame = ttk.LabelFrame(
-            self.tab_setup, text=" Create / Import List of Students ", padding="15")
-        student_frame.pack(fill="both", expand=True, padx=10, pady=5)
-
-        # Input Area
-        input_inner_frame = ttk.Frame(student_frame)
-        input_inner_frame.pack(fill="x", pady=5)
-
-        ttk.Label(input_inner_frame, text="Index No:").pack(side="left")
-        self.new_index = ttk.Entry(input_inner_frame, width=15)
-        self.new_index.pack(side="left", padx=5)
-
-        ttk.Label(input_inner_frame, text="Name:").pack(
-            side="left", padx=(10, 0))
-        self.new_name = ttk.Entry(input_inner_frame, width=25)
-        self.new_name.pack(side="left", padx=5)
-
-        # SPEED ENTRY: Move from Index -> Name, and Name -> Add Button
-        self.new_index.bind("<Return>", lambda e: self.new_name.focus_set())
-        # This one actually calls the add function when you hit Enter!
-        self.new_name.bind("<Return>", lambda e: self.add_single_student())
-
-        add_btn = tk.Button(input_inner_frame, text="+ Add",
-                            bg="#4CAF50", fg="white", command=self.add_single_student)
-        add_btn.pack(side="left", padx=10)
-
-        # Bulk Import Button
-        import_btn = tk.Button(
-            student_frame, text="Import CSV List", command=self.import_csv)
-        import_btn.pack(anchor="ne", pady=5)
-
-        # Student Table (Treeview)
-        columns = ("index", "name")
-        self.tree = ttk.Treeview(
-            student_frame, columns=columns, show="headings", height=15)
-        self.tree.heading("index", text="Index No.")
-        self.tree.heading("name", text="Student Name")
-
-        self.tree.column("index", width=150)
-        self.tree.column("name", width=350)
-
-        self.tree.pack(fill="both", expand=True)
-
-        # Delete Button
-        del_btn = ttk.Button(
-            student_frame, text="Delete Selected Student", command=self.delete_student)
-        del_btn.pack(pady=10)
+        # Start with nothing in the container
+        # (Or you could show a "Welcome" message)
 
     # ==========================================
-    # TAB 2: MARKING (Matches bottom half of sketch)
+    # VIEW 1: MARKING (The Main Event)
     # ==========================================
-    def build_attendance_tab(self):
-        # Refresh Button (Important to sync tabs)
-        refresh_frame = ttk.Frame(self.tab_mark, padding=10)
-        refresh_frame.pack(fill="x")
-        ttk.Button(refresh_frame, text="🔄 Refresh Student List",
-                   command=self.refresh_marking_list).pack(side="right")
+    def build_marking_view(self):
+        self.frame_marking = tk.Frame(self.container)
+
+        # Toolbar
+        tool_bar = tk.Frame(self.frame_marking)
+        tool_bar.pack(fill="x", pady=5)
+
+        # Toggle Button to switch views
+        tk.Button(tool_bar, text="⚙ Manage Students / Add New", command=self.show_student_view,
+                  bg="#FF9800", fg="white").pack(side="right")
+
+        tk.Label(tool_bar, text="Mark Attendance Below:",
+                 font=("Arial", 10, "bold")).pack(side="left")
 
         # Search Bar
-        search_frame = ttk.LabelFrame(
-            self.tab_mark, text=" Search ", padding="10")
-        search_frame.pack(fill="x", padx=10)
-
+        search_frame = tk.Frame(self.frame_marking, pady=5)
+        search_frame.pack(fill="x")
+        tk.Label(search_frame, text="Search Student: ").pack(side="left")
         self.search_var = tk.StringVar()
         self.search_var.trace_add("write", self.filter_marking_list)
-        ttk.Entry(search_frame, textvariable=self.search_var).pack(fill="x")
+        ttk.Entry(search_frame, textvariable=self.search_var).pack(
+            side="left", fill="x", expand=True)
 
-        # Scrollable Area
-        list_frame = ttk.LabelFrame(
-            self.tab_mark, text=" Mark Attendance (P=Present, A=Absent) ", padding="10")
-        list_frame.pack(fill="both", expand=True, padx=10, pady=10)
+        # Scrollable List
+        list_frame = ttk.Frame(self.frame_marking)
+        list_frame.pack(fill="both", expand=True)
 
         self.canvas = tk.Canvas(list_frame)
         self.scrollbar = ttk.Scrollbar(
@@ -177,218 +128,176 @@ class AttendanceApp:
 
         self.canvas.pack(side="left", fill="both", expand=True)
         self.scrollbar.pack(side="right", fill="y")
-
         self.scrollable_frame.bind("<Configure>", lambda e: self.canvas.configure(
             scrollregion=self.canvas.bbox("all")))
 
         # Save Button
-        save_btn = tk.Button(self.tab_mark, text="SAVE ATTENDANCE SHEET", bg="#0066cc", fg="white",
-                             font=("Arial", 12, "bold"), command=self.save_attendance)
-        save_btn.pack(fill="x", padx=20, pady=20)
+        tk.Button(self.frame_marking, text="💾 SAVE ATTENDANCE SHEET", bg="#0066cc", fg="white",
+                  font=("Arial", 12, "bold"), height=2, command=self.save_attendance).pack(fill="x", pady=10)
 
     # ==========================================
-    # LOGIC & FUNCTIONS
+    # VIEW 2: STUDENT MANAGER (Hidden by default)
     # ==========================================
+    def build_student_manager_view(self):
+        self.frame_students = tk.Frame(self.container)
 
-    def add_single_student(self):
-        idx = self.new_index.get().strip()
-        name = self.new_name.get().strip()
+        # Back Button
+        tk.Button(self.frame_students, text="🔙 Back to Marking", command=self.show_marking_view,
+                  bg="#607D8B", fg="white").pack(anchor="w", pady=5)
 
-        # VALIDATION: Check for empty fields
-        if not idx or not name:
-            messagebox.showwarning("Error", "Index and Name cannot be empty.")
-            return
+        # Add Section
+        add_frame = ttk.LabelFrame(
+            self.frame_students, text=" Add New Student ", padding=10)
+        add_frame.pack(fill="x", pady=5)
 
-        # VALIDATION: "names can only contain letters and whitespace" (Regex)
-        if not re.match(r"^[a-zA-Z\s]+$", name):
-            messagebox.showerror(
-                "Invalid Name", "Name must only contain letters and spaces.")
-            return
+        ttk.Label(add_frame, text="Index:").pack(side="left")
+        self.new_index = ttk.Entry(add_frame, width=15)
+        self.new_index.pack(side="left", padx=5)
 
-        if idx in self.students:
+        ttk.Label(add_frame, text="Name:").pack(side="left")
+        self.new_name = ttk.Entry(add_frame, width=25)
+        self.new_name.pack(side="left", padx=5)
+
+        tk.Button(add_frame, text="+ Add", bg="#4CAF50", fg="white",
+                  command=self.add_single_student).pack(side="left", padx=10)
+
+        # Treeview List
+        self.tree = ttk.Treeview(self.frame_students, columns=(
+            "idx", "name"), show="headings", height=12)
+        self.tree.heading("idx", text="Index Number")
+        self.tree.heading("name", text="Student Name")
+        self.tree.pack(fill="both", expand=True, pady=5)
+
+        tk.Button(self.frame_students, text="Delete Selected",
+                  command=self.delete_student).pack(pady=5)
+
+    # ==========================================
+    # LOGIC: SWITCHING VIEWS
+    # ==========================================
+    def lock_and_load(self):
+        # 1. Get Data
+        c_name = self.ent_cname.get().strip()
+        c_code = self.ent_ccode.get().strip()
+
+        if not c_name or not c_code:
             messagebox.showwarning(
-                "Duplicate", "This Index Number already exists.")
+                "Missing Info", "Please enter at least Course Name and Code.")
             return
 
-        self.students[idx] = name
-        self.save_students_to_file()
-        self.update_student_table()
+        # 2. Update UI
+        self.lbl_course_display.config(
+            text=f"{c_name.upper()}  -  {c_code.upper()}")
+        self.frame_active_header.pack(
+            fill="x", after=self.frame_config)  # Show Bold Title
 
-        # Clear inputs
-        self.new_index.delete(0, 'end')
-        self.new_name.delete(0, 'end')
+        # 3. "Collapse" the top part (Optional: Disable inputs)
+        self.ent_cname.config(state="disabled")
+        self.ent_ccode.config(state="disabled")
+        self.ent_lecturer.config(state="disabled")
+        self.ent_duration.config(state="disabled")
+        self.btn_continue.config(text="LOCKED", state="disabled", bg="#999")
 
-        # Sync the other tab immediately
+        # 4. Show Marking View
         self.refresh_marking_list()
+        self.show_marking_view()
 
-    def import_csv(self):
-        file_path = filedialog.askopenfilename(
-            filetypes=[("CSV Files", "*.csv")])
-        if file_path:
-            with open(file_path, "r") as f:
-                reader = csv.reader(f)
-                count = 0
-                for row in reader:
-                    if len(row) >= 2:
-                        idx, name = row[0].strip(), row[1].strip()
-                        self.students[idx] = name
-                        count += 1
-            self.save_students_to_file()
-            self.update_student_table()
-            self.refresh_marking_list()
-            messagebox.showinfo("Success", f"Imported {count} students!")
+    def show_marking_view(self):
+        self.frame_students.pack_forget()  # Hide Students
+        self.frame_marking.pack(fill="both", expand=True)  # Show Marking
+
+    def show_student_view(self):
+        self.frame_marking.pack_forget()  # Hide Marking
+        self.refresh_student_list()      # Update list before showing
+        self.frame_students.pack(fill="both", expand=True)  # Show Students
+
+    # ==========================================
+    # DATA LOGIC (Same as before, simplified)
+    # ==========================================
+    def add_single_student(self):
+        idx, name = self.new_index.get().strip(), self.new_name.get().strip()
+        if not idx or not name:
+            return
+        try:
+            self.cursor.execute(
+                "INSERT INTO students VALUES (?, ?)", (idx, name))
+            self.conn.commit()
+            self.new_index.delete(0, 'end')
+            self.new_name.delete(0, 'end')
+            self.refresh_student_list()
+            messagebox.showinfo("Saved", "Student Added!")
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Error", "Index already exists!")
 
     def delete_student(self):
-        selected_item = self.tree.selection()
-        if not selected_item:
-            return
+        sel = self.tree.selection()
+        if sel:
+            idx = self.tree.item(sel)['values'][0]
+            self.cursor.execute(
+                "DELETE FROM students WHERE index_number=?", (idx,))
+            self.conn.commit()
+            self.refresh_student_list()
 
-        # Get the index from the selected row
-        item = self.tree.item(selected_item)
-        idx = item['values'][0]  # The first column is Index
-        idx = str(idx)  # Ensure it's a string
-
-        if idx in self.students:
-            del self.students[idx]
-            self.save_students_to_file()
-            self.update_student_table()
-            self.refresh_marking_list()
-
-    def update_student_table(self):
-        # Clear table
+    def refresh_student_list(self):
+        self.cursor.execute("SELECT * FROM students")
         for item in self.tree.get_children():
             self.tree.delete(item)
-        # Re-populate
-        for idx, name in self.students.items():
-            self.tree.insert("", "end", values=(idx, name))
-
-    def load_students_from_file(self):
-        if os.path.exists("students.csv"):
-            with open("students.csv", "r") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if len(row) >= 2:
-                        self.students[row[0]] = row[1]
-            self.update_student_table()
-            self.refresh_marking_list()
-
-    def save_students_to_file(self):
-        with open("students.csv", "w", newline="") as f:
-            writer = csv.writer(f)
-            for idx, name in self.students.items():
-                writer.writerow([idx, name])
-
-    # --- MARKING LOGIC ---
+        for row in self.cursor.fetchall():
+            self.tree.insert("", "end", values=row)
 
     def refresh_marking_list(self):
-        # Rebuild the list in Tab 2
-        for widget in self.scrollable_frame.winfo_children():
-            widget.destroy()
-
-        self.attendance_vars = {}  # Reset vars
-
-        for idx, name in self.students.items():
-            self.create_student_row(idx, name)
+        for w in self.scrollable_frame.winfo_children():
+            w.destroy()
+        self.attendance_vars = {}
+        self.cursor.execute("SELECT * FROM students")
+        for row in self.cursor.fetchall():
+            self.create_student_row(row[0], row[1])
 
     def create_student_row(self, idx, name):
         row = ttk.Frame(self.scrollable_frame)
         row.pack(fill="x", pady=2)
-
-        # Label: "Index - Name"
-        lbl_text = f"{idx} - {name}"
-        ttk.Label(row, text=lbl_text, width=40).pack(side="left", padx=5)
-
-        # Radio Buttons
+        ttk.Label(row, text=f"{idx} - {name}",
+                  width=35).pack(side="left", padx=5)
         var = tk.StringVar(value="None")
         self.attendance_vars[idx] = var
-
-        # P and A buttons
         ttk.Radiobutton(row, text="P", variable=var,
                         value="Present").pack(side="left", padx=10)
         ttk.Radiobutton(row, text="A", variable=var,
                         value="Absent").pack(side="left", padx=10)
 
     def filter_marking_list(self, *args):
+        # (Same search logic as before)
         query = self.search_var.get().lower()
-
-        # Clear view
-        for widget in self.scrollable_frame.winfo_children():
-            widget.destroy()
-
-        # Re-add only matching students
-        for idx, name in self.students.items():
-            if query in name.lower() or query in str(idx).lower():
-                # We need to preserve the state of the buttons, so we reuse the variable
-                row = ttk.Frame(self.scrollable_frame)
-                row.pack(fill="x", pady=2)
-                ttk.Label(row, text=f"{idx} - {name}",
-                          width=40).pack(side="left", padx=5)
-
-                var = self.attendance_vars[idx]
-                ttk.Radiobutton(row, text="P", variable=var,
-                                value="Present").pack(side="left", padx=10)
-                ttk.Radiobutton(row, text="A", variable=var,
-                                value="Absent").pack(side="left", padx=10)
+        for w in self.scrollable_frame.winfo_children():
+            w.destroy()
+        self.cursor.execute("SELECT * FROM students")
+        for row in self.cursor.fetchall():
+            if query in row[1].lower() or query in str(row[0]).lower():
+                self.create_student_row(row[0], row[1])
 
     def save_attendance(self):
-        c_name = self.entry_course_name.get()
-        c_code = self.entry_course_code.get()
-        lecturer = self.entry_lecturer.get()
-        duration = self.entry_duration.get()
+        # Similar logic to previous step
+        c_name = self.ent_cname.get().strip()
+        c_code = self.ent_ccode.get().strip()
+        safe_name = re.sub(
+            r'[\\/*?:"<>|]', "", f"{datetime.now().strftime('%d-%m-%Y')} - {c_name} - {c_code}")
+        filename = f"{safe_name}.csv"
 
-        if not c_name or not c_code:
-            messagebox.showwarning(
-                "Missing Info", "Please fill in Course Name and Code in the Setup tab.")
-            return
-
-        # Check for unmarked students
-        unmarked = [idx for idx, var in self.attendance_vars.items()
-                    if var.get() == "None"]
-        if unmarked:
-            confirm = messagebox.askyesno(
-                "Unmarked Students", f"You have {len(unmarked)} students unmarked. Save anyway?")
-            if not confirm:
-                return
-
-        date_str = datetime.now().strftime("%Y-%m-%d")
-        time_str = datetime.now().strftime("%H:%M")
-        filename = "attendance_master_log.csv"
-        file_exists = os.path.exists(filename)
-
-        with open(filename, "a", newline="") as f:
-            writer = csv.writer(f)
-            # Write Header if new file
-            if not file_exists:
-                writer.writerow(["Date", "Time", "Course Name", "Course Code",
-                                "Lecturer", "Duration", "Index", "Name", "Status"])
-
-            # Write Data
-            for idx, name in self.students.items():
-                status = self.attendance_vars[idx].get()
-                if status == "None":
-                    status = "Unmarked"
-                writer.writerow([date_str, time_str, c_name,
-                                c_code, lecturer, duration, idx, name, status])
-
-        messagebox.showinfo(
-            "Saved", "Attendance saved successfully to attendance_master_log.csv!")
-
-    def show_help(self):
-        """Displays instructions and developer contact info."""
-        help_message = (
-            "KAAF ATTENDANCE PRO - USER GUIDE\n"
-            "--------------------------------\n\n"
-            "1. SETUP: Enter course details in Tab 1. Use 'Enter' to jump fields.\n"
-            "2. STUDENTS: Add students manually (Index, Name) or import a CSV.\n"
-            "3. MARKING: Go to Tab 2 to mark P (Present) or A (Absent).\n"
-            "4. SEARCH: Use the search bar to find students by name or index.\n"
-            "5. SAVING: Click 'SAVE ATTENDANCE' to generate the log file.\n\n"
-            "DEVELOPER SUPPORT:\n"
-            "Built by: [Arthur Japheth/Level 100 CS]\n"
-            "Contact: +233 543629142\n"
-            "Issues? Please send a screenshot of the error."
-        )
-        messagebox.showinfo("Help & Support", help_message)
+        try:
+            with open(filename, "w", newline="") as f:
+                writer = csv.writer(f)
+                writer.writerow(["Index", "Name", "Status", "Time"])
+                for idx, var in self.attendance_vars.items():
+                    # Quick DB lookup for name (safe)
+                    self.cursor.execute(
+                        "SELECT name FROM students WHERE index_number=?", (idx,))
+                    n_res = self.cursor.fetchone()
+                    name = n_res[0] if n_res else "Unknown"
+                    status = "Unmarked" if var.get() == "None" else var.get()
+                    writer.writerow(
+                        [idx, name, status, datetime.now().strftime("%H:%M")])
+            messagebox.showinfo("Success", f"Saved as: {filename}")
+        except Exception as e:
+            messagebox.showerror("Error", str(e))
 
 
 if __name__ == "__main__":
