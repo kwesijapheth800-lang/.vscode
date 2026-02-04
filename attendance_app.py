@@ -25,24 +25,32 @@ class AttendanceApp:
         self.conn.commit()
 
         self.attendance_vars = {}
-        self.course_details = {}  # Store course info here
+
+        # --- VALIDATION SETUP ---
+        # Register the validation function so Tkinter can use it
+        self.vcmd = (self.root.register(self.validate_number), '%P')
 
         # --- UI BUILDER ---
         self.setup_ui()
 
+    def validate_number(self, new_value):
+        # This function runs every time you type a key in the Duration box.
+        # It returns True (allow) if the text is empty or a number.
+        return new_value.isdigit() or new_value == ""
+
     def setup_ui(self):
-        # 1. HEADER (Always Visible)
+        # 1. HEADER
         header_frame = tk.Frame(self.root, bg="#003366", height=60)
         header_frame.pack(fill="x")
         tk.Label(header_frame, text="KAAF ATTENDANCE SYSTEM",
                  font=("Helvetica", 16, "bold"), bg="#003366", fg="white").pack(pady=15)
 
-        # 2. COURSE CONFIG SECTION (Top Area)
+        # 2. COURSE CONFIG SECTION
         self.frame_config = ttk.LabelFrame(
             self.root, text=" Step 1: Course Details ", padding="15")
         self.frame_config.pack(fill="x", padx=20, pady=10)
 
-        # Grid Layout for Inputs
+        # -- Inputs --
         ttk.Label(self.frame_config, text="Course Name:").grid(
             row=0, column=0, sticky="w")
         self.ent_cname = ttk.Entry(self.frame_config, width=25)
@@ -60,10 +68,21 @@ class AttendanceApp:
 
         ttk.Label(self.frame_config, text="Duration (Hrs):").grid(
             row=1, column=2, sticky="w")
-        self.ent_duration = ttk.Entry(self.frame_config, width=15)
+
+        # --- THE CHANGE: Adding validation here ---
+        self.ent_duration = ttk.Entry(
+            self.frame_config, width=15, validate="key", validatecommand=self.vcmd)
         self.ent_duration.grid(row=1, column=3, padx=5, pady=5)
 
-        # THE "CONTINUE" BUTTON
+        # -- Key Bindings --
+        self.ent_cname.bind("<Return>", lambda e: self.ent_ccode.focus_set())
+        self.ent_ccode.bind(
+            "<Return>", lambda e: self.ent_lecturer.focus_set())
+        self.ent_lecturer.bind(
+            "<Return>", lambda e: self.ent_duration.focus_set())
+        self.ent_duration.bind("<Return>", lambda e: self.lock_and_load())
+
+        # -- Continue Button --
         self.btn_continue = tk.Button(self.frame_config, text="CONTINUE ➤", bg="#4CAF50", fg="white",
                                       font=("Arial", 10, "bold"), command=self.lock_and_load)
         self.btn_continue.grid(
@@ -71,24 +90,19 @@ class AttendanceApp:
 
         # 3. THE "BOLD TITLE" HEADER (Hidden initially)
         self.frame_active_header = tk.Frame(self.root, bg="#f0f0f0", pady=10)
-        # We don't pack it yet. We pack it when "Continue" is clicked.
         self.lbl_course_display = tk.Label(self.frame_active_header, text="",
                                            font=("Arial", 22, "bold"), bg="#f0f0f0", fg="#333")
         self.lbl_course_display.pack()
 
-        # 4. CONTENT AREA (Where we swap Marking vs Student List)
+        # 4. CONTENT AREA
         self.container = tk.Frame(self.root)
         self.container.pack(fill="both", expand=True, padx=20, pady=5)
 
-        # -- Build the two different "Pages" --
         self.build_marking_view()
         self.build_student_manager_view()
 
-        # Start with nothing in the container
-        # (Or you could show a "Welcome" message)
-
     # ==========================================
-    # VIEW 1: MARKING (The Main Event)
+    # VIEW 1: MARKING
     # ==========================================
     def build_marking_view(self):
         self.frame_marking = tk.Frame(self.container)
@@ -97,10 +111,8 @@ class AttendanceApp:
         tool_bar = tk.Frame(self.frame_marking)
         tool_bar.pack(fill="x", pady=5)
 
-        # Toggle Button to switch views
         tk.Button(tool_bar, text="⚙ Manage Students / Add New", command=self.show_student_view,
                   bg="#FF9800", fg="white").pack(side="right")
-
         tk.Label(tool_bar, text="Mark Attendance Below:",
                  font=("Arial", 10, "bold")).pack(side="left")
 
@@ -113,7 +125,7 @@ class AttendanceApp:
         ttk.Entry(search_frame, textvariable=self.search_var).pack(
             side="left", fill="x", expand=True)
 
-        # Scrollable List
+        # List Area
         list_frame = ttk.Frame(self.frame_marking)
         list_frame.pack(fill="both", expand=True)
 
@@ -136,16 +148,14 @@ class AttendanceApp:
                   font=("Arial", 12, "bold"), height=2, command=self.save_attendance).pack(fill="x", pady=10)
 
     # ==========================================
-    # VIEW 2: STUDENT MANAGER (Hidden by default)
+    # VIEW 2: STUDENT MANAGER
     # ==========================================
     def build_student_manager_view(self):
         self.frame_students = tk.Frame(self.container)
 
-        # Back Button
         tk.Button(self.frame_students, text="🔙 Back to Marking", command=self.show_marking_view,
                   bg="#607D8B", fg="white").pack(anchor="w", pady=5)
 
-        # Add Section
         add_frame = ttk.LabelFrame(
             self.frame_students, text=" Add New Student ", padding=10)
         add_frame.pack(fill="x", pady=5)
@@ -158,10 +168,13 @@ class AttendanceApp:
         self.new_name = ttk.Entry(add_frame, width=25)
         self.new_name.pack(side="left", padx=5)
 
+        # -- Key Bindings --
+        self.new_index.bind("<Return>", lambda e: self.new_name.focus_set())
+        self.new_name.bind("<Return>", lambda e: self.add_single_student())
+
         tk.Button(add_frame, text="+ Add", bg="#4CAF50", fg="white",
                   command=self.add_single_student).pack(side="left", padx=10)
 
-        # Treeview List
         self.tree = ttk.Treeview(self.frame_students, columns=(
             "idx", "name"), show="headings", height=12)
         self.tree.heading("idx", text="Index Number")
@@ -172,10 +185,9 @@ class AttendanceApp:
                   command=self.delete_student).pack(pady=5)
 
     # ==========================================
-    # LOGIC: SWITCHING VIEWS
+    # LOGIC
     # ==========================================
     def lock_and_load(self):
-        # 1. Get Data
         c_name = self.ent_cname.get().strip()
         c_code = self.ent_ccode.get().strip()
 
@@ -184,45 +196,40 @@ class AttendanceApp:
                 "Missing Info", "Please enter at least Course Name and Code.")
             return
 
-        # 2. Update UI
         self.lbl_course_display.config(
             text=f"{c_name.upper()}  -  {c_code.upper()}")
-        self.frame_active_header.pack(
-            fill="x", after=self.frame_config)  # Show Bold Title
+        self.frame_active_header.pack(fill="x", after=self.frame_config)
 
-        # 3. "Collapse" the top part (Optional: Disable inputs)
         self.ent_cname.config(state="disabled")
         self.ent_ccode.config(state="disabled")
         self.ent_lecturer.config(state="disabled")
         self.ent_duration.config(state="disabled")
         self.btn_continue.config(text="LOCKED", state="disabled", bg="#999")
 
-        # 4. Show Marking View
         self.refresh_marking_list()
         self.show_marking_view()
 
     def show_marking_view(self):
-        self.frame_students.pack_forget()  # Hide Students
-        self.frame_marking.pack(fill="both", expand=True)  # Show Marking
+        self.frame_students.pack_forget()
+        self.frame_marking.pack(fill="both", expand=True)
 
     def show_student_view(self):
-        self.frame_marking.pack_forget()  # Hide Marking
-        self.refresh_student_list()      # Update list before showing
-        self.frame_students.pack(fill="both", expand=True)  # Show Students
+        self.frame_marking.pack_forget()
+        self.refresh_student_list()
+        self.frame_students.pack(fill="both", expand=True)
 
-    # ==========================================
-    # DATA LOGIC (Same as before, simplified)
-    # ==========================================
     def add_single_student(self):
         idx, name = self.new_index.get().strip(), self.new_name.get().strip()
         if not idx or not name:
             return
+
         try:
             self.cursor.execute(
                 "INSERT INTO students VALUES (?, ?)", (idx, name))
             self.conn.commit()
             self.new_index.delete(0, 'end')
             self.new_name.delete(0, 'end')
+            self.new_index.focus_set()
             self.refresh_student_list()
             messagebox.showinfo("Saved", "Student Added!")
         except sqlite3.IntegrityError:
@@ -265,7 +272,6 @@ class AttendanceApp:
                         value="Absent").pack(side="left", padx=10)
 
     def filter_marking_list(self, *args):
-        # (Same search logic as before)
         query = self.search_var.get().lower()
         for w in self.scrollable_frame.winfo_children():
             w.destroy()
@@ -275,7 +281,6 @@ class AttendanceApp:
                 self.create_student_row(row[0], row[1])
 
     def save_attendance(self):
-        # Similar logic to previous step
         c_name = self.ent_cname.get().strip()
         c_code = self.ent_ccode.get().strip()
         safe_name = re.sub(
@@ -287,7 +292,6 @@ class AttendanceApp:
                 writer = csv.writer(f)
                 writer.writerow(["Index", "Name", "Status", "Time"])
                 for idx, var in self.attendance_vars.items():
-                    # Quick DB lookup for name (safe)
                     self.cursor.execute(
                         "SELECT name FROM students WHERE index_number=?", (idx,))
                     n_res = self.cursor.fetchone()
